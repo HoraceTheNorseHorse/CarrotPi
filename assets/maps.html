@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1272, initial-scale=1.0" />
+  <title>CarrotPi Map</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: #0e0e1a;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: #e0e0e0;
+    }
+
+    /* ── Search bar ───────────────────────────────────────────────── */
+    #search-bar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      z-index: 1000;
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      background: rgba(14, 14, 26, 0.92);
+      border-bottom: 1px solid #333;
+    }
+
+    #dest-input {
+      flex: 1;
+      height: 52px;
+      padding: 0 16px;
+      font-size: 18px;
+      border: 1px solid #444;
+      border-radius: 8px;
+      background: #1c1c2e;
+      color: #e0e0e0;
+      outline: none;
+    }
+    #dest-input::placeholder { color: #666; }
+    #dest-input:focus { border-color: #2979ff; }
+
+    #go-btn, #clear-btn {
+      height: 52px;
+      padding: 0 20px;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #go-btn   { background: #2979ff; color: #fff; }
+    #go-btn:active   { background: #1a5fcc; }
+    #clear-btn { background: #333; color: #ccc; }
+    #clear-btn:active { background: #555; }
+
+    /* ── Map ─────────────────────────────────────────────────────── */
+    #map {
+      position: absolute;
+      top: 68px; left: 0; right: 0; bottom: 0;
+    }
+
+    /* ── LRM turn-by-turn panel — dark theme ─────────────────────── */
+    .leaflet-routing-container {
+      background: rgba(14, 14, 26, 0.95) !important;
+      color: #e0e0e0 !important;
+      border: 1px solid #333 !important;
+      border-radius: 8px !important;
+      max-height: calc(100vh - 80px) !important;
+      overflow-y: auto !important;
+      width: 300px !important;
+      font-size: 14px !important;
+    }
+    .leaflet-routing-alt h2,
+    .leaflet-routing-alt h3 { color: #aaa !important; font-size: 13px !important; }
+    .leaflet-routing-alt table { width: 100% !important; }
+    .leaflet-routing-alt tr { border-bottom: 1px solid #2a2a3e !important; }
+    .leaflet-routing-alt tr:hover { background: #1c1c30 !important; }
+    .leaflet-routing-alt td { color: #ddd !important; padding: 6px 8px !important; }
+    .leaflet-routing-geocoders { display: none !important; } /* hide built-in inputs */
+
+    /* Status message overlay */
+    #status {
+      position: absolute;
+      bottom: 12px; left: 50%; transform: translateX(-50%);
+      z-index: 1001;
+      background: rgba(14,14,26,0.88);
+      color: #aaa;
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      pointer-events: none;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="search-bar">
+    <input id="dest-input" type="text" placeholder="Enter destination…" autocomplete="off" />
+    <button id="go-btn">Go</button>
+    <button id="clear-btn">Clear</button>
+  </div>
+
+  <div id="map"></div>
+  <div id="status"></div>
+
+  <script>
+    // ── State ──────────────────────────────────────────────────────
+    var currentLat = 40.0639;
+    var currentLng = -80.7209;
+    var routingControl = null;
+
+    // ── Map init ───────────────────────────────────────────────────
+    var map = L.map('map', {
+      center: [currentLat, currentLng],
+      zoom: 14,
+      zoomControl: true,
+      attributionControl: true
+    });
+
+    // CartoDB Voyager — no Referer header required, works from file:// URLs
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19,
+      subdomains: 'abcd',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+    }).addTo(map);
+
+    // Blue dot — current position marker
+    var positionMarker = L.circleMarker([currentLat, currentLng], {
+      radius: 10,
+      fillColor: '#2979ff',
+      fillOpacity: 1.0,
+      color: '#ffffff',
+      weight: 2
+    }).addTo(map);
+
+    // ── Status helper ──────────────────────────────────────────────
+    function showStatus(msg, durationMs) {
+      var el = document.getElementById('status');
+      el.textContent = msg;
+      el.style.display = 'block';
+      if (durationMs) setTimeout(function() { el.style.display = 'none'; }, durationMs);
+    }
+
+    // ── Geocode via Nominatim, then route ─────────────────────────
+    function routeTo(address) {
+      if (!address.trim()) return;
+      showStatus('Searching…');
+
+      var url = 'https://nominatim.openstreetmap.org/search'
+              + '?format=json&limit=1&q=' + encodeURIComponent(address);
+
+      fetch(url, { headers: { 'Accept-Language': 'en' } })
+        .then(function(r) { return r.json(); })
+        .then(function(results) {
+          if (!results || results.length === 0) {
+            showStatus('Address not found', 3000);
+            return;
+          }
+          var destLat = parseFloat(results[0].lat);
+          var destLng = parseFloat(results[0].lon);
+          drawRoute(currentLat, currentLng, destLat, destLng);
+          showStatus('Route found', 2000);
+        })
+        .catch(function(err) {
+          showStatus('Geocoding error: ' + err.message, 4000);
+        });
+    }
+
+    // ── Draw / update route ────────────────────────────────────────
+    function drawRoute(fromLat, fromLng, toLat, toLng) {
+      if (routingControl) {
+        // Update existing control waypoints instead of recreating it
+        routingControl.setWaypoints([
+          L.latLng(fromLat, fromLng),
+          L.latLng(toLat,   toLng)
+        ]);
+        return;
+      }
+
+      routingControl = L.Routing.control({
+        waypoints: [
+          L.latLng(fromLat, fromLng),
+          L.latLng(toLat,   toLng)
+        ],
+        router: L.Routing.osrmv1({
+          serviceUrl: 'https://router.project-osrm.org/route/v1',
+          profile: 'driving'
+        }),
+        routeWhileDragging: false,
+        addWaypoints: false,
+        fitSelectedRoutes: true,
+        show: true,
+        lineOptions: {
+          styles: [{ color: '#2979ff', weight: 5, opacity: 0.85 }]
+        },
+        createMarker: function(i, waypoint) {
+          // Start = blue dot (already on map); end = red pin
+          if (i === 0) return null;
+          return L.marker(waypoint.latLng);
+        }
+      }).addTo(map);
+    }
+
+    // ── Clear route ────────────────────────────────────────────────
+    function clearRoute() {
+      if (routingControl) {
+        map.removeControl(routingControl);
+        routingControl = null;
+      }
+      document.getElementById('dest-input').value = '';
+    }
+
+    // ── Search bar wiring ─────────────────────────────────────────
+    document.getElementById('go-btn').addEventListener('click', function() {
+      routeTo(document.getElementById('dest-input').value);
+    });
+
+    document.getElementById('clear-btn').addEventListener('click', clearRoute);
+
+    document.getElementById('dest-input').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') routeTo(this.value);
+    });
+
+    // ── Python → JS bridge ─────────────────────────────────────────
+    // Called by MapsPage.update_location(lat, lng) via runJavaScript()
+    function updatePosition(lat, lng) {
+      currentLat = lat;
+      currentLng = lng;
+      positionMarker.setLatLng([lat, lng]);
+      map.setView([lat, lng]);
+
+      // If a route is active, refresh the start waypoint to current position
+      if (routingControl) {
+        var wps = routingControl.getWaypoints();
+        if (wps.length >= 2) {
+          routingControl.setWaypoints([
+            L.latLng(lat, lng),
+            wps[wps.length - 1].latLng
+          ]);
+        }
+      }
+    }
+  </script>
+</body>
+</html>

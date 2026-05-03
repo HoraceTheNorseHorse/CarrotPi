@@ -1,0 +1,36 @@
+# CarrotPi configuration — copy to config.ini and fill in your values.
+# config.ini is gitignored; NEVER commit real keys.
+
+[maps]
+# Map display mode.
+#   leaflet — local Leaflet.js + OpenStreetMap map loaded from assets/maps.html.
+#             Works on macOS and Pi. No API key required. Default.
+#   google  — loads https://maps.google.com in the embedded browser.
+#             Works on Pi. Crashes on macOS (pip-installed QtWebEngineProcess
+#             lacks the com.apple.security.cs.allow-jit entitlement, causing
+#             SIGABRT the moment Google Maps fires JS JIT compilation).
+maps_mode = google
+
+# Google Maps Embed API key (required for the Maps Embed API, optional for maps.google.com direct load)
+# api_key = YOUR_GOOGLE_MAPS_API_KEY_HERE
+
+[spotify]
+# Spotify display mode.
+#   placeholder — dark screen with status text. Works everywhere. Default.
+#   web         — loads https://open.spotify.com in the embedded browser.
+#                 Requires Spotify Premium and Pi audio hardware (e.g. HiFiBerry DAC).
+#                 May exhibit the same macOS JIT/entitlement crash as Google Maps —
+#                 use placeholder mode for Mac development.
+spotify_mode = placeholder
+
+[weather]
+# NWS does not require an API key, but a contact email is requested in the User-Agent header.
+# contact_email = you@example.com
+
+# Default location for weather fetch (used until GPS provides a live fix).
+# lat = 40.0639
+# lon = -80.7209
+
+[display]
+# Set to 1 to start in dark mode (e.g. when headlight relay signal is detected)
+# dark_mode = 0
